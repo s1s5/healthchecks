@@ -14,6 +14,8 @@ x-app-base:
     - CACHE_URL=rediscache://redis:6379/1
     - DEBUG=False
     - USE_WHITENOISE=True
+    - APP_HEALTHCHECK_URL=http://localhost:8000/ping/a1be46ec-173b-4189-8fd8-5d3dcd0b8bf2
+    - SENDALERTS_HEALTHCHECK_URL=http://app:8000/ping/0bdcae0d-3614-4b3d-a03b-e5214ca46e32
   volumes:
     - .:/usr/src/app
     - media_root:/data/media
@@ -45,6 +47,12 @@ services:
       ./wait-for-it.sh db:5432 -- bash -c "
       python manage.py migrate --noinput; python manage.py collectstatic --noinput;
       while [ true ]; do python manage.py runserver 0.0.0.0:8000 ; sleep 10; done"
+    healthcheck:
+      test: ["CMD", "python", "healthcheck-app.py"]
+      interval: 5m
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   smtp:
     << : *app-base

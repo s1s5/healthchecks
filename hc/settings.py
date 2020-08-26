@@ -179,3 +179,5 @@ if env.bool('USE_WHITENOISE', default=False):
         'whitenoise.middleware.WhiteNoiseMiddleware')
     STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
     COMPRESS_ENABLED = False
+
+SENDALERTS_HEALTHCHECK_URL = env('SENDALERTS_HEALTHCHECK_URL', default=None)

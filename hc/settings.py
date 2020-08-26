@@ -48,7 +48,7 @@ INSTALLED_APPS = (
     "hc.payments",
 )
 
-MIDDLEWARE = (
+MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -58,7 +58,7 @@ MIDDLEWARE = (
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "django.middleware.locale.LocaleMiddleware",
     "hc.accounts.middleware.TeamAccessMiddleware",
-)
+]
 
 AUTHENTICATION_BACKENDS = (
     "hc.accounts.backends.EmailBackend",
@@ -108,7 +108,7 @@ PING_EMAIL_DOMAIN = env("PING_EMAIL_DOMAIN", default="localhost")
 PING_BODY_LIMIT = env.int("PING_BODY_LIMIT", default=10000)
 STATIC_URL = "/static/"
 STATICFILES_DIRS = [os.path.join(BASE_DIR, "static")]
-STATIC_ROOT = os.path.join(BASE_DIR, "static-collected")
+STATIC_ROOT = env("STATIC_ROOT", default=os.path.join(BASE_DIR, "static-collected"))
 STATICFILES_FINDERS = (
     "django.contrib.staticfiles.finders.FileSystemFinder",
     "django.contrib.staticfiles.finders.AppDirectoriesFinder",
@@ -116,6 +116,7 @@ STATICFILES_FINDERS = (
 )
 COMPRESS_OFFLINE = True
 COMPRESS_CSS_HASHING_METHOD = "content"
+
 
 # Discord integration
 DISCORD_CLIENT_ID = env("DISCORD_CLIENT_ID", default=None)
@@ -170,3 +171,11 @@ SESSION_ENGINE = "django.contrib.sessions.backends.cached_db"
 CACHES = {
     'default': env.cache(default='memcache://'),
 }
+
+
+if env.bool('USE_WHITENOISE', default=False):
+    MIDDLEWARE.insert(
+        MIDDLEWARE.index('django.middleware.security.SecurityMiddleware') + 1,
+        'whitenoise.middleware.WhiteNoiseMiddleware')
+    STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+    COMPRESS_ENABLED = False

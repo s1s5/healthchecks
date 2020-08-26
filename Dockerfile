@@ -14,5 +14,6 @@ COPY stuff ./stuff
 COPY templates ./templates
 COPY wait-for-it.sh ./wait-for-it.sh
 COPY healthcheck-app.py ./healthcheck-app.py
+COPY CHANGELOG.md ./CHANGELOG.md
 
 CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]

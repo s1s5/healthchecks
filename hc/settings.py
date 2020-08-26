@@ -7,34 +7,23 @@ https://docs.djangoproject.com/en/2.1/ref/settings
 
 import os
 import warnings
+import environ
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+env = environ.Env(
+)
 
-def envbool(s, default):
-    v = os.getenv(s, default=default)
-    if v not in ("", "True", "False"):
-        msg = "Unexpected value %s=%s, use 'True' or 'False'" % (s, v)
-        raise Exception(msg)
-    return v == "True"
+SECRET_KEY = env("SECRET_KEY", default="secret_key")
+METRICS_KEY = env("METRICS_KEY", default="metrics_key")
+DEBUG = env.bool("DEBUG", default=True)
+ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=[])
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL",
+                         default="healthchecks@example.org")
+SUPPORT_EMAIL = env("SUPPORT_EMAIL", default="info@example.com")
+USE_PAYMENTS = env.bool("USE_PAYMENTS", default=False)
+REGISTRATION_OPEN = env.bool("REGISTRATION_OPEN", default=True)
 
-
-def envint(s, default):
-    v = os.getenv(s, default)
-    if v == "None":
-        return None
-
-    return int(v)
-
-
-SECRET_KEY = os.getenv("SECRET_KEY", "---")
-METRICS_KEY = os.getenv("METRICS_KEY")
-DEBUG = envbool("DEBUG", "True")
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "*").split(",")
-DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "healthchecks@example.org")
-SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL")
-USE_PAYMENTS = envbool("USE_PAYMENTS", "False")
-REGISTRATION_OPEN = envbool("REGISTRATION_OPEN", "True")
 VERSION = ""
 with open(os.path.join(BASE_DIR, "CHANGELOG.md"), encoding="utf-8") as f:
     for line in f.readlines():
@@ -99,62 +88,23 @@ WSGI_APPLICATION = "hc.wsgi.application"
 TEST_RUNNER = "hc.api.tests.CustomRunner"
 
 
-# Default database engine is SQLite. So one can just check out code,
-# install requirements.txt and do manage.py runserver and it works
 DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": os.getenv("DB_NAME", BASE_DIR + "/hc.sqlite"),
-    }
+    "default": env.db(default="sqlite:///hc.sqlite"),
 }
 
-# You can switch database engine to postgres or mysql using environment
-# variable 'DB'. Travis CI does this.
-if os.getenv("DB") == "postgres":
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.postgresql",
-            "HOST": os.getenv("DB_HOST", ""),
-            "PORT": os.getenv("DB_PORT", ""),
-            "NAME": os.getenv("DB_NAME", "hc"),
-            "USER": os.getenv("DB_USER", "postgres"),
-            "PASSWORD": os.getenv("DB_PASSWORD", ""),
-            "CONN_MAX_AGE": envint("DB_CONN_MAX_AGE", "0"),
-            "TEST": {"CHARSET": "UTF8"},
-            "OPTIONS": {
-                "sslmode": os.getenv("DB_SSLMODE", "prefer"),
-                "target_session_attrs": os.getenv(
-                    "DB_TARGET_SESSION_ATTRS", "read-write"
-                ),
-            },
-        }
-    }
-
-if os.getenv("DB") == "mysql":
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.mysql",
-            "HOST": os.getenv("DB_HOST", ""),
-            "PORT": os.getenv("DB_PORT", ""),
-            "NAME": os.getenv("DB_NAME", "hc"),
-            "USER": os.getenv("DB_USER", "root"),
-            "PASSWORD": os.getenv("DB_PASSWORD", ""),
-            "TEST": {"CHARSET": "UTF8"},
-        }
-    }
-
 USE_TZ = True
-TIME_ZONE = "UTC"
+TIME_ZONE = env("TIME_ZONE", default="Asia/Tokyo")
+LANGUAGE_CODE = env("LANGUAGE_CODE", default="ja")
 USE_I18N = True
 USE_L10N = True
 LOCALE_PATHS = (os.path.join(BASE_DIR, "locale"),)
 
-SITE_ROOT = os.getenv("SITE_ROOT", "http://localhost:8000")
-SITE_NAME = os.getenv("SITE_NAME", "Mychecks")
-MASTER_BADGE_LABEL = os.getenv("MASTER_BADGE_LABEL", SITE_NAME)
-PING_ENDPOINT = os.getenv("PING_ENDPOINT", SITE_ROOT + "/ping/")
-PING_EMAIL_DOMAIN = os.getenv("PING_EMAIL_DOMAIN", "localhost")
-PING_BODY_LIMIT = envint("PING_BODY_LIMIT", "10000")
+SITE_ROOT = env("SITE_ROOT", default="http://localhost:8000")
+SITE_NAME = env("SITE_NAME", default="Mychecks")
+MASTER_BADGE_LABEL = env("MASTER_BADGE_LABEL", default=SITE_NAME)
+PING_ENDPOINT = env("PING_ENDPOINT", default=SITE_ROOT + "/ping/")
+PING_EMAIL_DOMAIN = env("PING_EMAIL_DOMAIN", default="localhost")
+PING_BODY_LIMIT = env.int("PING_BODY_LIMIT", default=10000)
 STATIC_URL = "/static/"
 STATICFILES_DIRS = [os.path.join(BASE_DIR, "static")]
 STATIC_ROOT = os.path.join(BASE_DIR, "static-collected")
@@ -167,60 +117,49 @@ COMPRESS_OFFLINE = True
 COMPRESS_CSS_HASHING_METHOD = "content"
 
 # Discord integration
-DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
-DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
+DISCORD_CLIENT_ID = env("DISCORD_CLIENT_ID", default=None)
+DISCORD_CLIENT_SECRET = env("DISCORD_CLIENT_SECRET", default=None)
 
 # Email integration
-EMAIL_HOST = os.getenv("EMAIL_HOST", "")
-EMAIL_PORT = envint("EMAIL_PORT", "587")
-EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
-EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
-EMAIL_USE_TLS = envbool("EMAIL_USE_TLS", "True")
-EMAIL_USE_VERIFICATION = envbool("EMAIL_USE_VERIFICATION", "True")
+vars().update(env.email_url('EMAIL_URL', default='consolemail://'))
 
 # Slack integration
-SLACK_CLIENT_ID = os.getenv("SLACK_CLIENT_ID")
-SLACK_CLIENT_SECRET = os.getenv("SLACK_CLIENT_SECRET")
+SLACK_CLIENT_ID = env("SLACK_CLIENT_ID", default=None)
+SLACK_CLIENT_SECRET = env("SLACK_CLIENT_SECRET", default=None)
 
 # Pushover integration
-PUSHOVER_API_TOKEN = os.getenv("PUSHOVER_API_TOKEN")
-PUSHOVER_SUBSCRIPTION_URL = os.getenv("PUSHOVER_SUBSCRIPTION_URL")
-PUSHOVER_EMERGENCY_RETRY_DELAY = int(os.getenv("PUSHOVER_EMERGENCY_RETRY_DELAY", "300"))
-PUSHOVER_EMERGENCY_EXPIRATION = int(os.getenv("PUSHOVER_EMERGENCY_EXPIRATION", "86400"))
+PUSHOVER_API_TOKEN = env("PUSHOVER_API_TOKEN", default=None)
+PUSHOVER_SUBSCRIPTION_URL = env("PUSHOVER_SUBSCRIPTION_URL", default=None)
+PUSHOVER_EMERGENCY_RETRY_DELAY = env.int("PUSHOVER_EMERGENCY_RETRY_DELAY", default=300)
+PUSHOVER_EMERGENCY_EXPIRATION = env.int("PUSHOVER_EMERGENCY_EXPIRATION", default=86400)
 
 # Pushbullet integration
-PUSHBULLET_CLIENT_ID = os.getenv("PUSHBULLET_CLIENT_ID")
-PUSHBULLET_CLIENT_SECRET = os.getenv("PUSHBULLET_CLIENT_SECRET")
+PUSHBULLET_CLIENT_ID = env("PUSHBULLET_CLIENT_ID", default=None)
+PUSHBULLET_CLIENT_SECRET = env("PUSHBULLET_CLIENT_SECRET", default=None)
 
 # Telegram integration -- override in local_settings.py
-TELEGRAM_BOT_NAME = os.getenv("TELEGRAM_BOT_NAME", "ExampleBot")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_BOT_NAME = env("TELEGRAM_BOT_NAME", default="ExampleBot")
+TELEGRAM_TOKEN = env("TELEGRAM_TOKEN", default=None)
 
 # SMS and WhatsApp (Twilio) integration
-TWILIO_ACCOUNT = os.getenv("TWILIO_ACCOUNT")
-TWILIO_AUTH = os.getenv("TWILIO_AUTH")
-TWILIO_FROM = os.getenv("TWILIO_FROM")
-TWILIO_USE_WHATSAPP = envbool("TWILIO_USE_WHATSAPP", "False")
+TWILIO_ACCOUNT = env("TWILIO_ACCOUNT", default=None)
+TWILIO_AUTH = env("TWILIO_AUTH", default=None)
+TWILIO_FROM = env("TWILIO_FROM", default=None)
+TWILIO_USE_WHATSAPP = env.bool("TWILIO_USE_WHATSAPP", default=False)
 
 # PagerDuty
-PD_VENDOR_KEY = os.getenv("PD_VENDOR_KEY")
+PD_VENDOR_KEY = env("PD_VENDOR_KEY", default=None)
 
 # Trello
-TRELLO_APP_KEY = os.getenv("TRELLO_APP_KEY")
+TRELLO_APP_KEY = env("TRELLO_APP_KEY", default=None)
 
 # Matrix
-MATRIX_HOMESERVER = os.getenv("MATRIX_HOMESERVER")
-MATRIX_USER_ID = os.getenv("MATRIX_USER_ID")
-MATRIX_ACCESS_TOKEN = os.getenv("MATRIX_ACCESS_TOKEN")
+MATRIX_HOMESERVER = env("MATRIX_HOMESERVER", default=None)
+MATRIX_USER_ID = env("MATRIX_USER_ID", default=None)
+MATRIX_ACCESS_TOKEN = env("MATRIX_ACCESS_TOKEN", default=None)
 
 # Apprise
-APPRISE_ENABLED = envbool("APPRISE_ENABLED", "False")
+APPRISE_ENABLED = env.bool("APPRISE_ENABLED", default=False)
 
 # Local shell commands
-SHELL_ENABLED = envbool("SHELL_ENABLED", "False")
-
-
-if os.path.exists(os.path.join(BASE_DIR, "hc/local_settings.py")):
-    from .local_settings import *
-else:
-    warnings.warn("local_settings.py not found, using defaults")
+SHELL_ENABLED = env.bool("SHELL_ENABLED", default=False)

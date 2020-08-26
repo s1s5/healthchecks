@@ -180,4 +180,14 @@ if env.bool('USE_WHITENOISE', default=False):
     STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
     COMPRESS_ENABLED = False
 
+if env('SENTRY_DSN', default=None):
+    import sentry_sdk
+    from sentry_sdk.integrations.django import DjangoIntegration
+
+    sentry_sdk.init(
+        dsn=env('SENTRY_DSN'),
+        integrations=[DjangoIntegration()],
+        send_default_pii=True
+    )
+
 SENDALERTS_HEALTHCHECK_URL = env('SENDALERTS_HEALTHCHECK_URL', default=None)

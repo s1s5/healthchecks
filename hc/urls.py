@@ -3,6 +3,11 @@ from django.urls import include, path
 
 from hc.accounts import views as accounts_views
 
+
+def trigger_error(request):
+    raise Exception('debug test error')
+
+
 urlpatterns = [
     path("admin/login/", accounts_views.login),
     path("admin/", admin.site.urls),
@@ -18,6 +23,7 @@ urlpatterns = [
         accounts_views.remove_project,
         name="hc-remove-project",
     ),
+    path('sentry-debug/', trigger_error),
     path("", include("hc.api.urls")),
     path("", include("hc.front.urls")),
     path("", include("hc.payments.urls")),

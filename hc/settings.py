@@ -164,3 +164,9 @@ APPRISE_ENABLED = env.bool("APPRISE_ENABLED", default=False)
 
 # Local shell commands
 SHELL_ENABLED = env.bool("SHELL_ENABLED", default=False)
+
+SESSION_COOKIE_NAME = env('SESSION_COOKIE_NAME', default='sessionid')
+SESSION_ENGINE = "django.contrib.sessions.backends.cached_db"
+CACHES = {
+    'default': env.cache(default='memcache://'),
+}

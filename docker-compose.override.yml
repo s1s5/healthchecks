@@ -1,0 +1,63 @@
+version: '3.5'
+
+x-app-base:
+  &app-base
+  build:
+    context: .
+    dockerfile: Dockerfile
+  environment:
+    - DEBUG=True
+    - PYTHONUNBUFFERED=1
+    - PYTHONASYNCIODEBUG=1
+    - DATABASE_URL=psql://psqluser:psqlpass@db/hc
+    - STATIC_ROOT=/data/static
+    - MEDIA_ROOT=/data/media
+    - ALLOWED_HOSTS=*
+    - CACHE_URL=rediscache://redis:6379/1
+  volumes:
+    - .:/usr/src/app
+    - media_root:/data/media
+  depends_on:
+    - db
+  user: ${USER_ID}:${GROUP_ID}
+
+volumes:
+  pg_data:
+  media_root:
+
+services:
+  db:
+    image: postgres:11.2
+    environment:
+      - POSTGRES_USER=psqluser
+      - POSTGRES_PASSWORD=psqlpass
+      - POSTGRES_DB=hc
+      - PGDATA=/postgres/data
+    volumes:
+      - pg_data:/postgres/data
+    command: postgres -c max_connections=1000
+
+  app:
+    << : *app-base
+    ports:
+      - "14902:8000"
+    command: |
+      ./wait-for-it.sh db:5432 -- bash -c "
+      python manage.py migrate --noinput;
+      while [ true ]; do python manage.py runserver 0.0.0.0:8000 ; sleep 10; done"
+
+  smtp:
+    << : *app-base
+    command: |
+      ./wait-for-it.sh app:8000 -- bash -c "
+      while [ true ]; do python manage.py smtpd --port 2525 ; sleep 10; done"
+
+  sendalerts:
+    << : *app-base
+    command: |
+      ./wait-for-it.sh app:8000 -- bash -c "
+      while [ true ]; do python manage.py sendalerts ; sleep 10; done"
+
+  redis:
+    image: redis:5.0.3
+    hostname: redis

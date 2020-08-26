@@ -6,13 +6,14 @@ https://docs.djangoproject.com/en/2.1/ref/settings
 """
 
 import os
-import warnings
 import environ
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-env = environ.Env(
-)
+env = environ.Env()
+if 'ENV_PATH' in os.environ:
+    environ.Env.read_env(os.environ['ENV_PATH'])
+
 
 SECRET_KEY = env("SECRET_KEY", default="secret_key")
 METRICS_KEY = env("METRICS_KEY", default="metrics_key")

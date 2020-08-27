@@ -1,0 +1,71 @@
+version: '3.5'
+
+x-app-base:
+  &app-base
+  build:
+    context: .
+    dockerfile: Dockerfile
+  environment:
+    # - DEBUG=True
+    - PYTHONUNBUFFERED=1
+    - PYTHONASYNCIODEBUG=1
+    - DATABASE_URL=psql://psqluser:psqlpass@db/hc
+    - ALLOWED_HOSTS=*
+    - CACHE_URL=rediscache://redis:6379/1
+    - DEBUG=False
+    - USE_WHITENOISE=True
+    - APP_HEALTHCHECK_URL=http://localhost:8000/ping/a1be46ec-173b-4189-8fd8-5d3dcd0b8bf2
+    - SENDALERTS_HEALTHCHECK_URL=http://app:8000/ping/0bdcae0d-3614-4b3d-a03b-e5214ca46e32
+  volumes:
+    - .:/usr/src/app
+    - media_root:/data/media
+  depends_on:
+    - db
+  user: ${USER_ID}:${GROUP_ID}
+
+volumes:
+  pg_data:
+  media_root:
+
+services:
+  db:
+    image: postgres:11.2
+    environment:
+      - POSTGRES_USER=psqluser
+      - POSTGRES_PASSWORD=psqlpass
+      - POSTGRES_DB=hc
+      - PGDATA=/postgres/data
+    volumes:
+      - pg_data:/postgres/data
+    command: postgres -c max_connections=1000
+
+  app:
+    << : *app-base
+    ports:
+      - "14902:8000"
+    command: |
+      ./wait-for-it.sh db:5432 -- bash -c "
+      python manage.py migrate --noinput; python manage.py collectstatic --noinput;
+      while [ true ]; do python manage.py runserver 0.0.0.0:8000 ; sleep 10; done"
+    healthcheck:
+      test: ["CMD", "python", "healthcheck-app.py"]
+      interval: 5m
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  smtp:
+    << : *app-base
+    command: |
+      ./wait-for-it.sh app:8000 -- bash -c "
+      while [ true ]; do python manage.py smtpd --port 2525 ; sleep 10; done"
+
+  sendalerts:
+    << : *app-base
+    command: |
+      ./wait-for-it.sh app:8000 -- bash -c "
+      while [ true ]; do python manage.py sendalerts ; sleep 10; done"
+
+  redis:
+    image: redis:5.0.3
+    hostname: redis

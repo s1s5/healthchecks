@@ -1,14 +1,19 @@
+import logging
 from datetime import timedelta as td
 import time
 from threading import Thread
+import urllib.request
 
 from django.core.management.base import BaseCommand
+from django.conf import settings
 from django.utils import timezone
 from hc.api.models import Check, Flip
 from statsd.defaults.env import statsd
 
 SENDING_TMPL = "Sending alert, status=%s, code=%s\n"
 SEND_TIME_TMPL = "Sending took %.1fs, code=%s\n"
+
+logger = logging.getLogger(__name__)
 
 
 def notify(flip_id, stdout):
@@ -154,5 +159,11 @@ class Command(BaseCommand):
             if i % 60 == 0:
                 timestamp = timezone.now().isoformat()
                 self.stdout.write("-- MARK %s --\n" % timestamp)
+            if i % 300 == 0:
+                if settings.SENDALERTS_HEALTHCHECK_URL:
+                    try:
+                        urllib.request.urlopen(settings.SENDALERTS_HEALTHCHECK_URL, timeout=10)
+                    except Exception as e:
+                        logger.exception('send healthcheck failed %s', e)
 
         return "Sent %d alert(s)" % sent

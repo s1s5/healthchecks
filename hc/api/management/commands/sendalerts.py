@@ -159,6 +159,7 @@ class Command(BaseCommand):
             if i % 60 == 0:
                 timestamp = timezone.now().isoformat()
                 self.stdout.write("-- MARK %s --\n" % timestamp)
+            if i % 300 == 0:
                 if settings.SENDALERTS_HEALTHCHECK_URL:
                     try:
                         urllib.request.urlopen(settings.SENDALERTS_HEALTHCHECK_URL, timeout=10)

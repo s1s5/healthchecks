@@ -7,7 +7,7 @@ import urllib.request
 from django.core.management.base import BaseCommand
 from django.conf import settings
 from django.utils import timezone
-from hc.api.models import Check, Flip
+from hc.api.models import Check, Flip, Ping
 from statsd.defaults.env import statsd
 
 SENDING_TMPL = "Sending alert, status=%s, code=%s\n"
@@ -165,5 +165,10 @@ class Command(BaseCommand):
                         urllib.request.urlopen(settings.SENDALERTS_HEALTHCHECK_URL, timeout=10)
                     except Exception as e:
                         logger.exception('send healthcheck failed %s', e)
+
+                try:
+                    Ping.objects.filter(created__lte=timezone.now() - td(days=90)).delete()
+                except Exception as e:
+                    logger.exception('send healthcheck failed %s', e)
 
         return "Sent %d alert(s)" % sent

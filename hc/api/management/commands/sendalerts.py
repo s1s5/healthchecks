@@ -1,4 +1,5 @@
 import logging
+import os
 from datetime import timedelta as td
 import time
 from threading import Thread
@@ -141,34 +142,42 @@ class Command(BaseCommand):
     def handle(self, use_threads=True, loop=True, *args, **options):
         self.stdout.write("sendalerts is now running\n")
 
-        i, sent = 0, 0
-        while True:
-            # Create flips for any checks going down
-            while self.handle_going_down():
-                pass
+        health_filename = '/tmp/healthchecks-sendalerts-alive'
+        with open(health_filename, 'w') as fp:
+            fp.write("alive")
 
-            # Process the unprocessed flips
-            while self.process_one_flip(use_threads):
-                sent += 1
+        try:
+            i, sent = 0, 0
+            while True:
+                # Create flips for any checks going down
+                while self.handle_going_down():
+                    pass
 
-            if not loop:
-                break
+                # Process the unprocessed flips
+                while self.process_one_flip(use_threads):
+                    sent += 1
 
-            time.sleep(2)
-            i += 1
-            if i % 60 == 0:
-                timestamp = timezone.now().isoformat()
-                self.stdout.write("-- MARK %s --\n" % timestamp)
-            if i % 300 == 0:
-                if settings.SENDALERTS_HEALTHCHECK_URL:
+                if not loop:
+                    break
+
+                time.sleep(2)
+                i += 1
+                if i % 60 == 0:
+                    timestamp = timezone.now().isoformat()
+                    self.stdout.write("-- MARK %s --\n" % timestamp)
+                if i % 300 == 0:
+                    if settings.SENDALERTS_HEALTHCHECK_URL:
+                        try:
+                            urllib.request.urlopen(settings.SENDALERTS_HEALTHCHECK_URL, timeout=10)
+                        except Exception as e:
+                            logger.exception('send healthcheck failed %s', e)
+
                     try:
-                        urllib.request.urlopen(settings.SENDALERTS_HEALTHCHECK_URL, timeout=10)
+                        Ping.objects.filter(created__lte=timezone.now() - td(days=90)).delete()
                     except Exception as e:
                         logger.exception('send healthcheck failed %s', e)
 
-                try:
-                    Ping.objects.filter(created__lte=timezone.now() - td(days=90)).delete()
-                except Exception as e:
-                    logger.exception('send healthcheck failed %s', e)
-
-        return "Sent %d alert(s)" % sent
+            return "Sent %d alert(s)" % sent
+        finally:
+            if os.path.exists(health_filename):
+                os.remove(health_filename)

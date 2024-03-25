@@ -1,20 +1,17 @@
 import os
-import environ
-import urllib.request
 import sys
+import urllib.request
 
-env = environ.Env()
-if 'ENV_PATH' in os.environ:
-    environ.Env.read_env(os.environ['ENV_PATH'])
+APP_HEALTHCHECK_URL = os.getenv("APP_HEALTHCHECK_URL")
 
 try:
     urllib.request.urlopen("http://localhost:8000/", timeout=10)
 except Exception:
     sys.exit(1)
 else:
-    if env('APP_HEALTHCHECK_URL', default=None):
+    if APP_HEALTHCHECK_URL:
         try:
-            urllib.request.urlopen(env('APP_HEALTHCHECK_URL'), timeout=10)
+            urllib.request.urlopen(APP_HEALTHCHECK_URL, timeout=10)
         except Exception:
             pass
 sys.exit(0)

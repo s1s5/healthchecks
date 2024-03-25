@@ -1,30 +1,23 @@
 import logging
 import os
-from datetime import timedelta as td
-import time
-from threading import Thread
-import urllib.request
-
-from django.core.management.base import BaseCommand
-from django.conf import settings
-from django.utils import timezone
-from hc.api.models import Check, Flip, Ping
-
-
 import signal
 import time
+import urllib.request
 from argparse import ArgumentParser
 from datetime import timedelta as td
 from io import TextIOBase
+from threading import Thread
 from types import FrameType
 from typing import Any
 
+from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.db.models import F, Sum
+from django.utils import timezone
 from django.utils.timezone import now
 from statsd.defaults.env import statsd
 
-from hc.api.models import Check, Flip
+from hc.api.models import Check, Flip, Ping
 
 logger = logging.getLogger(__name__)
 
@@ -168,19 +161,19 @@ class Command(BaseCommand):
         signal.signal(signal.SIGINT, self.on_signal)
 
         self.stdout.write("sendalerts is now running\n")
-        health_filename = '/tmp/healthchecks-sendalerts-alive'
-        with open(health_filename, 'w') as fp:
+        health_filename = "/tmp/healthchecks-sendalerts-alive"
+        with open(health_filename, "w") as fp:
             fp.write("alive")
 
         try:
             i, sent = 0, 0
-            while True:
+            while not self.shutdown:
                 # Create flips for any checks going down
                 while self.handle_going_down():
                     pass
 
                 # Process the unprocessed flips
-                while self.process_one_flip(use_threads):
+                while self.process_one_flip():
                     sent += 1
 
                 if not loop:
@@ -196,12 +189,12 @@ class Command(BaseCommand):
                         try:
                             urllib.request.urlopen(settings.SENDALERTS_HEALTHCHECK_URL, timeout=10)
                         except Exception as e:
-                            logger.exception('send healthcheck failed %s', e)
+                            logger.exception("send healthcheck failed %s", e)
 
                     try:
                         Ping.objects.filter(created__lte=timezone.now() - td(days=90)).delete()
                     except Exception as e:
-                        logger.exception('send healthcheck failed %s', e)
+                        logger.exception("send healthcheck failed %s", e)
 
             return "Sent %d alert(s)" % sent
         finally:

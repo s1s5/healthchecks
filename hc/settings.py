@@ -2,31 +2,51 @@
 Django settings for healthchecks project.
 
 For the full list of settings and their values, see
-https://docs.djangoproject.com/en/2.1/ref/settings
+https://docs.djangoproject.com/en/4.2/ref/settings/
 """
+from __future__ import annotations
 
 import os
-import environ
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+import django_stubs_ext
 
-env = environ.Env()
-if 'ENV_PATH' in os.environ:
-    environ.Env.read_env(os.environ['ENV_PATH'])
+django_stubs_ext.monkeypatch()
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-SECRET_KEY = env("SECRET_KEY", default="secret_key")
-METRICS_KEY = env("METRICS_KEY", default="metrics_key")
-DEBUG = env.bool("DEBUG", default=True)
-ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=[])
-DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL",
-                         default="healthchecks@example.org")
-SUPPORT_EMAIL = env("SUPPORT_EMAIL", default="info@example.com")
-USE_PAYMENTS = env.bool("USE_PAYMENTS", default=False)
-REGISTRATION_OPEN = env.bool("REGISTRATION_OPEN", default=True)
+def envbool(s: str, default: str) -> bool:
+    v = os.getenv(s, default=default)
+    if v not in ("", "True", "False"):
+        msg = "Unexpected value %s=%s, use 'True' or 'False'" % (s, v)
+        raise Exception(msg)
+    return v == "True"
+
+
+def envint(s: str, default: str) -> int | None:
+    v = os.getenv(s, default)
+    if v == "None":
+        return None
+
+    return int(v)
+
+
+SECRET_KEY = os.getenv("SECRET_KEY", "---")
+METRICS_KEY = os.getenv("METRICS_KEY")
+DEBUG = envbool("DEBUG", "True")
+ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "*").split(",")
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "healthchecks@example.org")
+SUPPORT_EMAIL = os.getenv("SUPPORT_EMAIL")
+USE_PAYMENTS = envbool("USE_PAYMENTS", "False")
+REGISTRATION_OPEN = envbool("REGISTRATION_OPEN", "True")
+if admins := os.getenv("ADMINS"):
+    ADMINS = [(email, email) for email in admins.split(",")]
 
 VERSION = ""
-with open(os.path.join(BASE_DIR, "CHANGELOG.md"), encoding="utf-8") as f:
+
+with (BASE_DIR / "CHANGELOG.md").open(encoding="utf-8") as f:
     for line in f.readlines():
         if line.startswith("## v"):
             VERSION = line.split()[1]
@@ -45,32 +65,42 @@ INSTALLED_APPS = (
     "compressor",
     "hc.api",
     "hc.front",
+    "hc.logs",
     "hc.payments",
 )
 
+
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "hc.accounts.middleware.CustomHeaderMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "django.middleware.locale.LocaleMiddleware",
     "hc.accounts.middleware.TeamAccessMiddleware",
 ]
 
-AUTHENTICATION_BACKENDS = (
+if envbool("USE_GZIP_MIDDLEWARE", "False"):
+    MIDDLEWARE.append("django.middleware.gzip.GZipMiddleware")
+
+AUTHENTICATION_BACKENDS = [
     "hc.accounts.backends.EmailBackend",
     "hc.accounts.backends.ProfileBackend",
-)
+]
+
+REMOTE_USER_HEADER = os.getenv("REMOTE_USER_HEADER")
+if REMOTE_USER_HEADER:
+    AUTHENTICATION_BACKENDS = ["hc.accounts.backends.CustomHeaderBackend"]
 
 ROOT_URLCONF = "hc.urls"
 
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [os.path.join(BASE_DIR, "templates")],
+        "DIRS": [BASE_DIR / "templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -85,30 +115,91 @@ TEMPLATES = [
     }
 ]
 
-WSGI_APPLICATION = "hc.wsgi.application"
-TEST_RUNNER = "hc.api.tests.CustomRunner"
-
-
-DATABASES = {
-    "default": env.db(default="sqlite:///hc.sqlite"),
+# Extend Django logging to log unhandled exceptions
+# and all logs from hc.* loggers to the database.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "db": {
+            "level": "DEBUG",
+            "class": "hc.logs.Handler",
+        },
+    },
+    "loggers": {
+        "django.request": {"level": "ERROR", "handlers": ["db"]},
+        "hc": {"level": "DEBUG", "handlers": ["db"]},
+    },
 }
 
-USE_TZ = True
-TIME_ZONE = env("TIME_ZONE", default="Asia/Tokyo")
-LANGUAGE_CODE = env("LANGUAGE_CODE", default="ja")
-USE_I18N = True
-USE_L10N = True
-LOCALE_PATHS = (os.path.join(BASE_DIR, "locale"),)
+WSGI_APPLICATION = "hc.wsgi.application"
+TEST_RUNNER = "hc.api.tests.CustomRunner"
+DEFAULT_EXCEPTION_REPORTER_FILTER = "hc.debug.ExceptionReporterFilter"
 
-SITE_ROOT = env("SITE_ROOT", default="http://localhost:8000")
-SITE_NAME = env("SITE_NAME", default="Mychecks")
-MASTER_BADGE_LABEL = env("MASTER_BADGE_LABEL", default=SITE_NAME)
-PING_ENDPOINT = env("PING_ENDPOINT", default=SITE_ROOT + "/ping/")
-PING_EMAIL_DOMAIN = env("PING_EMAIL_DOMAIN", default="localhost")
-PING_BODY_LIMIT = env.int("PING_BODY_LIMIT", default=10000)
+
+# Default database engine is SQLite. So one can just check out code,
+# install requirements.txt and do manage.py runserver and it works
+DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
+DATABASES: Mapping[str, Any] = {
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": os.getenv("DB_NAME", BASE_DIR / "hc.sqlite"),
+    }
+}
+
+# You can switch database engine to postgres or mysql using environment
+# variable 'DB'. Travis CI does this.
+if os.getenv("DB") == "postgres":
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "HOST": os.getenv("DB_HOST", ""),
+            "PORT": os.getenv("DB_PORT", ""),
+            "NAME": os.getenv("DB_NAME", "hc"),
+            "USER": os.getenv("DB_USER", "postgres"),
+            "PASSWORD": os.getenv("DB_PASSWORD", ""),
+            "CONN_MAX_AGE": envint("DB_CONN_MAX_AGE", "0"),
+            "TEST": {"CHARSET": "UTF8"},
+            "OPTIONS": {
+                "sslmode": os.getenv("DB_SSLMODE", "prefer"),
+                "target_session_attrs": os.getenv(
+                    "DB_TARGET_SESSION_ATTRS", "read-write"
+                ),
+            },
+        }
+    }
+
+if os.getenv("DB") == "mysql":
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.mysql",
+            "HOST": os.getenv("DB_HOST", ""),
+            "PORT": os.getenv("DB_PORT", ""),
+            "NAME": os.getenv("DB_NAME", "hc"),
+            "USER": os.getenv("DB_USER", "root"),
+            "PASSWORD": os.getenv("DB_PASSWORD", ""),
+            "TEST": {"CHARSET": "UTF8"},
+        }
+    }
+
+USE_TZ = True
+TIME_ZONE = "UTC"
+USE_I18N = False
+
+SITE_ROOT = os.getenv("SITE_ROOT", "http://localhost:8000")
+SITE_NAME = os.getenv("SITE_NAME", "Mychecks")
+SITE_LOGO_URL = os.getenv("SITE_LOGO_URL")
+MASTER_BADGE_LABEL = os.getenv("MASTER_BADGE_LABEL", SITE_NAME)
+PING_ENDPOINT = os.getenv("PING_ENDPOINT", SITE_ROOT + "/ping/")
+PING_EMAIL_DOMAIN = os.getenv("PING_EMAIL_DOMAIN", "localhost")
+PING_BODY_LIMIT = envint("PING_BODY_LIMIT", "10000")
+# If PING_BODY_LIMIT is higher than the default value for DATA_UPLOAD_MAX_MEMORY_SIZE,
+# then we need to bump up DATA_UPLOAD_MAX_MEMORY_SIZE too:
+if PING_BODY_LIMIT and PING_BODY_LIMIT > 2621440:
+    DATA_UPLOAD_MAX_MEMORY_SIZE = PING_BODY_LIMIT
 STATIC_URL = "/static/"
-STATICFILES_DIRS = [os.path.join(BASE_DIR, "static")]
-STATIC_ROOT = env("STATIC_ROOT", default=os.path.join(BASE_DIR, "static-collected"))
+STATICFILES_DIRS = [BASE_DIR / "static"]
+STATIC_ROOT = BASE_DIR / "static-collected"
 STATICFILES_FINDERS = (
     "django.contrib.staticfiles.finders.FileSystemFinder",
     "django.contrib.staticfiles.finders.AppDirectoriesFinder",
@@ -116,78 +207,136 @@ STATICFILES_FINDERS = (
 )
 COMPRESS_OFFLINE = True
 COMPRESS_CSS_HASHING_METHOD = "content"
-
-
-# Discord integration
-DISCORD_CLIENT_ID = env("DISCORD_CLIENT_ID", default=None)
-DISCORD_CLIENT_SECRET = env("DISCORD_CLIENT_SECRET", default=None)
-
-# Email integration
-vars().update(env.email_url('EMAIL_URL', default='consolemail://'))
-
-# Slack integration
-SLACK_CLIENT_ID = env("SLACK_CLIENT_ID", default=None)
-SLACK_CLIENT_SECRET = env("SLACK_CLIENT_SECRET", default=None)
-
-# Pushover integration
-PUSHOVER_API_TOKEN = env("PUSHOVER_API_TOKEN", default=None)
-PUSHOVER_SUBSCRIPTION_URL = env("PUSHOVER_SUBSCRIPTION_URL", default=None)
-PUSHOVER_EMERGENCY_RETRY_DELAY = env.int("PUSHOVER_EMERGENCY_RETRY_DELAY", default=300)
-PUSHOVER_EMERGENCY_EXPIRATION = env.int("PUSHOVER_EMERGENCY_EXPIRATION", default=86400)
-
-# Pushbullet integration
-PUSHBULLET_CLIENT_ID = env("PUSHBULLET_CLIENT_ID", default=None)
-PUSHBULLET_CLIENT_SECRET = env("PUSHBULLET_CLIENT_SECRET", default=None)
-
-# Telegram integration -- override in local_settings.py
-TELEGRAM_BOT_NAME = env("TELEGRAM_BOT_NAME", default="ExampleBot")
-TELEGRAM_TOKEN = env("TELEGRAM_TOKEN", default=None)
-
-# SMS and WhatsApp (Twilio) integration
-TWILIO_ACCOUNT = env("TWILIO_ACCOUNT", default=None)
-TWILIO_AUTH = env("TWILIO_AUTH", default=None)
-TWILIO_FROM = env("TWILIO_FROM", default=None)
-TWILIO_USE_WHATSAPP = env.bool("TWILIO_USE_WHATSAPP", default=False)
-
-# PagerDuty
-PD_VENDOR_KEY = env("PD_VENDOR_KEY", default=None)
-
-# Trello
-TRELLO_APP_KEY = env("TRELLO_APP_KEY", default=None)
-
-# Matrix
-MATRIX_HOMESERVER = env("MATRIX_HOMESERVER", default=None)
-MATRIX_USER_ID = env("MATRIX_USER_ID", default=None)
-MATRIX_ACCESS_TOKEN = env("MATRIX_ACCESS_TOKEN", default=None)
-
-# Apprise
-APPRISE_ENABLED = env.bool("APPRISE_ENABLED", default=False)
-
-# Local shell commands
-SHELL_ENABLED = env.bool("SHELL_ENABLED", default=False)
-
-SESSION_COOKIE_NAME = env('SESSION_COOKIE_NAME', default='sessionid')
-SESSION_ENGINE = "django.contrib.sessions.backends.cached_db"
-CACHES = {
-    'default': env.cache(default='memcache://'),
+COMPRESS_STORAGE = "compressor.storage.GzipCompressorFileStorage"
+# Use CssRelativeFilter instead of CssAbsoluteFilter to fix
+# icon font loading when serving Healthchecks from a subdirectory
+COMPRESS_FILTERS = {
+    "css": [
+        "compressor.filters.css_default.CssRelativeFilter",
+        "compressor.filters.cssmin.rCSSMinFilter",
+    ],
+    "js": ["compressor.filters.jsmin.rJSMinFilter"],
 }
 
 
-if env.bool('USE_WHITENOISE', default=False):
-    MIDDLEWARE.insert(
-        MIDDLEWARE.index('django.middleware.security.SecurityMiddleware') + 1,
-        'whitenoise.middleware.WhiteNoiseMiddleware')
-    STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
-    COMPRESS_ENABLED = False
+def immutable_file_test(path: Any, url: str) -> bool:
+    return "/static/CACHE/" in url or "/static/fonts/" in url
 
-if env('SENTRY_DSN', default=None):
-    import sentry_sdk
-    from sentry_sdk.integrations.django import DjangoIntegration
 
-    sentry_sdk.init(
-        dsn=env('SENTRY_DSN'),
-        integrations=[DjangoIntegration()],
-        send_default_pii=True
-    )
+WHITENOISE_IMMUTABLE_FILE_TEST = immutable_file_test
 
-SENDALERTS_HEALTHCHECK_URL = env('SENDALERTS_HEALTHCHECK_URL', default=None)
+# SMTP credentials for sending email
+EMAIL_HOST = os.getenv("EMAIL_HOST", "")
+EMAIL_PORT = envint("EMAIL_PORT", "587")
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = envbool("EMAIL_USE_TLS", "True")
+EMAIL_USE_SSL = envbool("EMAIL_USE_SSL", "False")
+EMAIL_USE_VERIFICATION = envbool("EMAIL_USE_VERIFICATION", "True")
+EMAIL_MAIL_FROM_TMPL = os.getenv("EMAIL_MAIL_FROM_TMPL", "")
+
+# WebAuthn
+RP_ID = os.getenv("RP_ID")
+
+# Object storage credentials for storing large ping bodies.
+# (Optional. If not specified, will store ping bodies in the database.)
+S3_ACCESS_KEY = os.getenv("S3_ACCESS_KEY")
+S3_SECRET_KEY = os.getenv("S3_SECRET_KEY")
+S3_ENDPOINT = os.getenv("S3_ENDPOINT")
+S3_REGION = os.getenv("S3_REGION")
+S3_BUCKET = os.getenv("S3_BUCKET")
+S3_TIMEOUT = envint("S3_TIMEOUT", "60")
+S3_SECURE = envbool("S3_SECURE", "True")
+
+# Integrations
+
+# Apprise
+APPRISE_ENABLED = envbool("APPRISE_ENABLED", "False")
+
+# Discord integration
+DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
+DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
+
+
+# LINE Notify
+LINENOTIFY_CLIENT_ID = os.getenv("LINENOTIFY_CLIENT_ID")
+LINENOTIFY_CLIENT_SECRET = os.getenv("LINENOTIFY_CLIENT_SECRET")
+
+# Matrix
+MATRIX_HOMESERVER = os.getenv("MATRIX_HOMESERVER")
+MATRIX_USER_ID = os.getenv("MATRIX_USER_ID")
+MATRIX_ACCESS_TOKEN = os.getenv("MATRIX_ACCESS_TOKEN")
+
+# Mattermost
+MATTERMOST_ENABLED = envbool("MATTERMOST_ENABLED", "True")
+
+# MS Teams
+MSTEAMS_ENABLED = envbool("MSTEAMS_ENABLED", "True")
+
+# Opsgenie
+OPSGENIE_ENABLED = envbool("OPSGENIE_ENABLED", "True")
+
+# PagerTree
+PAGERTREE_ENABLED = envbool("PAGERTREE_ENABLED", "True")
+
+# PagerDuty
+PD_ENABLED = envbool("PD_ENABLED", "True")
+PD_APP_ID = os.getenv("PD_APP_ID")
+
+# Prometheus
+PROMETHEUS_ENABLED = envbool("PROMETHEUS_ENABLED", "True")
+
+# Pushover integration
+PUSHOVER_API_TOKEN = os.getenv("PUSHOVER_API_TOKEN")
+PUSHOVER_SUBSCRIPTION_URL = os.getenv("PUSHOVER_SUBSCRIPTION_URL")
+PUSHOVER_EMERGENCY_RETRY_DELAY = int(os.getenv("PUSHOVER_EMERGENCY_RETRY_DELAY", "300"))
+PUSHOVER_EMERGENCY_EXPIRATION = int(os.getenv("PUSHOVER_EMERGENCY_EXPIRATION", "86400"))
+
+# Pushbullet integration
+PUSHBULLET_CLIENT_ID = os.getenv("PUSHBULLET_CLIENT_ID")
+PUSHBULLET_CLIENT_SECRET = os.getenv("PUSHBULLET_CLIENT_SECRET")
+
+# Rocket.Chat
+ROCKETCHAT_ENABLED = envbool("ROCKETCHAT_ENABLED", "True")
+
+# Local shell commands
+SHELL_ENABLED = envbool("SHELL_ENABLED", "False")
+
+# Signal
+SIGNAL_CLI_SOCKET = os.getenv("SIGNAL_CLI_SOCKET")
+
+# Slack integration
+SLACK_CLIENT_ID = os.getenv("SLACK_CLIENT_ID")
+SLACK_CLIENT_SECRET = os.getenv("SLACK_CLIENT_SECRET")
+SLACK_ENABLED = envbool("SLACK_ENABLED", "True")
+
+# Spike.sh
+SPIKE_ENABLED = envbool("SPIKE_ENABLED", "True")
+
+# Telegram integration -- override in local_settings.py
+TELEGRAM_BOT_NAME = os.getenv("TELEGRAM_BOT_NAME", "ExampleBot")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+
+# SMS and WhatsApp (Twilio) integration
+TWILIO_ACCOUNT = os.getenv("TWILIO_ACCOUNT")
+TWILIO_AUTH = os.getenv("TWILIO_AUTH")
+TWILIO_FROM = os.getenv("TWILIO_FROM")
+TWILIO_MESSAGING_SERVICE_SID = os.getenv("TWILIO_MESSAGING_SERVICE_SID")
+TWILIO_USE_WHATSAPP = envbool("TWILIO_USE_WHATSAPP", "False")
+
+# Trello
+TRELLO_APP_KEY = os.getenv("TRELLO_APP_KEY")
+
+# VictorOps
+VICTOROPS_ENABLED = envbool("VICTOROPS_ENABLED", "True")
+
+# Webhooks
+WEBHOOKS_ENABLED = envbool("WEBHOOKS_ENABLED", "True")
+INTEGRATIONS_ALLOW_PRIVATE_IPS = envbool("INTEGRATIONS_ALLOW_PRIVATE_IPS", "False")
+
+# Zulip
+ZULIP_ENABLED = envbool("ZULIP_ENABLED", "True")
+
+# Read additional configuration from hc/local_settings.py if it exists
+if (BASE_DIR / "hc/local_settings.py").exists():
+    from .local_settings import *  # noqa: F403

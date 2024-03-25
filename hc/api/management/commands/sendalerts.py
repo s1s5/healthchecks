@@ -9,60 +9,69 @@ from django.core.management.base import BaseCommand
 from django.conf import settings
 from django.utils import timezone
 from hc.api.models import Check, Flip, Ping
+
+
+import signal
+import time
+from argparse import ArgumentParser
+from datetime import timedelta as td
+from io import TextIOBase
+from types import FrameType
+from typing import Any
+
+from django.core.management.base import BaseCommand
+from django.db.models import F, Sum
+from django.utils.timezone import now
 from statsd.defaults.env import statsd
 
-SENDING_TMPL = "Sending alert, status=%s, code=%s\n"
-SEND_TIME_TMPL = "Sending took %.1fs, code=%s\n"
+from hc.api.models import Check, Flip
 
 logger = logging.getLogger(__name__)
 
 
-def notify(flip_id, stdout):
+def notify(flip_id: int, stdout: TextIOBase) -> None:
     flip = Flip.objects.get(id=flip_id)
-
     check = flip.owner
+
+    # Set or clear dates for followup nags
+    check.project.update_next_nag_dates()
+
+    channels = flip.select_channels()
+    if not channels:
+        return
+
     # Set the historic status here but *don't save it*.
     # It would be nicer to pass the status explicitly, as a separate parameter.
     check.status = flip.new_status
     # And just to make sure it doesn't get saved by a future coding accident:
     setattr(check, "save", None)
 
-    stdout.write(SENDING_TMPL % (flip.new_status, check.code))
-
-    # Set dates for followup nags
-    if flip.new_status == "down":
-        check.project.set_next_nag_date()
-
     # Send notifications
-    send_start = timezone.now()
-    errors = flip.send_alerts()
-    for ch, error in errors:
-        stdout.write("ERROR: %s %s %s\n" % (ch.kind, ch.value, error))
-
-    # If sending took more than 5s, log it
-    send_time = timezone.now() - send_start
-    if send_time.total_seconds() > 5:
-        stdout.write(SEND_TIME_TMPL % (send_time.total_seconds(), check.code))
+    kinds = ", ".join([ch.kind for ch in channels])
+    stdout.write(f"{check.code} goes {check.status}, notifying via {kinds}\n")
+    send_start = now()
+    for ch in channels:
+        notify_start = time.time()
+        error = ch.notify(check)
+        secs = time.time() - notify_start
+        label = "ERR" if error else "OK"
+        s = " * %-3s %4.1fs %-10s %s %s\n" % (label, secs, ch.kind, ch.code, error)
+        stdout.write(s)
 
     statsd.timing("hc.sendalerts.dwellTime", send_start - flip.created)
-    statsd.timing("hc.sendalerts.sendTime", send_time)
-
-
-def notify_on_thread(flip_id, stdout):
-    t = Thread(target=notify, args=(flip_id, stdout))
-    t.start()
+    statsd.timing("hc.sendalerts.sendTime", now() - send_start)
 
 
 class Command(BaseCommand):
     help = "Sends UP/DOWN email alerts"
 
-    def add_arguments(self, parser):
+    def add_arguments(self, parser: ArgumentParser) -> None:
         parser.add_argument(
             "--no-loop",
             action="store_false",
             dest="loop",
             default=True,
-            help="Do not keep running indefinitely in a 2 second wait loop",
+            help="Do not keep running indefinitely. Process all due alerts, then exit.",
         )
 
         parser.add_argument(
@@ -70,38 +79,42 @@ class Command(BaseCommand):
             action="store_false",
             dest="use_threads",
             default=False,
-            help="Send alerts synchronously, without using threads",
+            help="Deprecated and ignored. Do not use.",
         )
 
-    def process_one_flip(self, use_threads=True):
-        """ Find unprocessed flip, send notifications.  """
+    def process_one_flip(self) -> bool:
+        """Find unprocessed flip, send notifications."""
 
-        # Order by processed, otherwise Django will automatically order by id
-        # and make the query less efficient
-        q = Flip.objects.filter(processed=None).order_by("processed")
+        q = Flip.objects.filter(processed=None)
+        # Prioritize flips with low historic notification send times
+        q = q.annotate(last_duration_sum=Sum("owner__channel__last_notify_duration"))
+        q = q.order_by(F("last_duration_sum").asc(nulls_first=True))
         flip = q.first()
         if flip is None:
             return False
 
         q = Flip.objects.filter(id=flip.id, processed=None)
-        num_updated = q.update(processed=timezone.now())
+        num_updated = q.update(processed=now())
         if num_updated != 1:
             # Nothing got updated: another worker process got there first.
             return True
 
-        if use_threads:
-            notify_on_thread(flip.id, self.stdout)
-        else:
-            notify(flip.id, self.stdout)
-
+        notify(flip.id, self.stdout)
         return True
 
-    def handle_going_down(self):
-        """ Process a single check going down.  """
+    def handle_going_down(self) -> bool:
+        """Process a single check going down.
 
-        now = timezone.now()
+        1. Find a check with alert_after in the past, and status other than "down".
+        2. Calculate its current status.
+        3. If calculation throws an exception, push alert_after forward and re-raise.
+        4. If the current status is not "down", update alert_after and return.
+        5. Update the check's status in the database to "down".
+        6. If exactly 1 row gets updated, create a Flip object.
 
-        q = Check.objects.filter(alert_after__lt=now).exclude(status="down")
+        """
+
+        q = Check.objects.filter(alert_after__lt=now()).exclude(status="down")
         # Sort by alert_after, to avoid unnecessary sorting by id:
         check = q.order_by("alert_after").first()
         if check is None:
@@ -115,7 +128,7 @@ class Command(BaseCommand):
         except Exception as e:
             # Make sure we don't trip on this check again for an hour:
             # Otherwise sendalerts may end up in a crash loop.
-            q.update(alert_after=now + td(hours=1))
+            q.update(alert_after=now() + td(hours=1))
             # Then re-raise the exception:
             raise e
 
@@ -124,8 +137,13 @@ class Command(BaseCommand):
             q.update(alert_after=check.going_down_after())
             return True
 
-        # Atomically update status
         flip_time = check.going_down_after()
+        # In theory, going_down_after() can return None, but:
+        # get_status() just reported status "down", so "going_down_after()"
+        # must be able to calculate precisely when the check's state flipped.
+        assert flip_time
+
+        # Atomically update status
         num_updated = q.update(alert_after=None, status="down")
         if num_updated != 1:
             # Nothing got updated: another worker process got there first.
@@ -139,9 +157,17 @@ class Command(BaseCommand):
 
         return True
 
-    def handle(self, use_threads=True, loop=True, *args, **options):
-        self.stdout.write("sendalerts is now running\n")
+    def on_signal(self, signum: int, frame: FrameType | None) -> None:
+        desc = signal.strsignal(signum)
+        self.stdout.write(f"{desc}, finishing...\n")
+        self.shutdown = True
 
+    def handle(self, use_threads: bool, loop: bool, **options: Any) -> str:
+        self.shutdown = False
+        signal.signal(signal.SIGTERM, self.on_signal)
+        signal.signal(signal.SIGINT, self.on_signal)
+
+        self.stdout.write("sendalerts is now running\n")
         health_filename = '/tmp/healthchecks-sendalerts-alive'
         with open(health_filename, 'w') as fp:
             fp.write("alive")

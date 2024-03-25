@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends "base_project.html" %}
 {% load compress humanize static hc_extras %}
 
 {% block title %}Add Shell Command - {{ site_name }}{% endblock %}
@@ -56,12 +56,10 @@
         </div>
         </div>
 
-        <div class="form-group" class="clearfix">
-            <br>
-            <br>
-            <div class="text-right">
-                <button type="submit" class="btn btn-primary">Save Integration</button>
-            </div>
+        <br>
+        <br>
+        <div class="form-group text-right">
+            <button type="submit" class="btn btn-primary">Save Integration</button>
         </div>
         </form>
 

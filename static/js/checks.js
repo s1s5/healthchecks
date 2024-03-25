@@ -1,12 +1,13 @@
 $(function () {
     var base = document.getElementById("base-url").getAttribute("href").slice(0, -1);
 
-    $(".my-checks-name").click(function() {
+    $(".rw .my-checks-name").click(function() {
         var code = $(this).closest("tr.checks-row").attr("id");
         var url = base + "/checks/" + code + "/name/";
 
         $("#update-name-form").attr("action", url);
         $("#update-name-input").val(this.dataset.name);
+        $("#update-slug-input").val(this.dataset.slug);
 
         var tagsSelectize = document.getElementById("update-tags-input").selectize;
         tagsSelectize.setValue(this.dataset.tags.split(" "));
@@ -27,7 +28,7 @@ $(function () {
         }
     });
 
-    $(".integrations").on("click", "span", function() {
+    $(".rw .integrations").on("click", "span", function() {
         var isOff = $(this).toggleClass("off").hasClass("off");
         var token = $('input[name=csrfmiddlewaretoken]').val();
 
@@ -51,15 +52,9 @@ $(function () {
         if (this.innerText == "Never") {
             return false;
         }
-
-        $("#ping-details-body").text("Updating...");
-        $('#ping-details-modal').modal("show");
-
         var code = $(this).closest("tr.checks-row").attr("id");
         var lastPingUrl = base + "/checks/" + code + "/last_ping/";
-        $.get(lastPingUrl, function(data) {
-            $("#ping-details-body" ).html(data);
-        });
+        loadPingDetails(lastPingUrl);
 
         var logUrl = base + "/checks/" + code + "/log/";
         $("#ping-details-log").attr("href", logUrl);
@@ -67,28 +62,40 @@ $(function () {
         return false;
     });
 
+    $(".last-ping").tooltip({
+        selector: ".label-confirmation",
+        title: 'The word "confirm" was found in request body'
+    });
+
+    $("#my-checks-tags .btn").tooltip({
+        title: function() {return this.getAttribute("data-tooltip");}
+    });
+
     function applyFilters() {
         // Make a list of currently checked tags:
         var checked = [];
-        var qs = [];
+        var url = new URL(window.location.href);
+        url.search = "";
         $("#my-checks-tags .checked").each(function(index, el) {
             checked.push(el.textContent);
-            qs.push({"name": "tag", "value": el.textContent});
+            url.searchParams.append("tag", el.textContent);
         });
 
         var search = $("#search").val().toLowerCase();
         if (search) {
-            qs.push({"name": "search", "value": search});
+            url.searchParams.append("search", search);
         }
 
         // Update hash
         if (window.history && window.history.replaceState) {
-            var url = $("#checks-table").data("list-url");
-            if (qs.length) {
-                url += "?" + $.param(qs);
-            }
-            window.history.replaceState({}, "", url);
+            window.history.replaceState({}, "", url.toString());
         }
+
+        // Update sort links
+        document.querySelectorAll("a[data-sort-value]").forEach((a) => {
+            url.searchParams.set("sort", a.dataset.sortValue);
+            a.setAttribute("href", url.toString());
+        });
 
         // No checked tags and no search string: show all
         if (checked.length == 0 && !search) {
@@ -141,7 +148,6 @@ $(function () {
         return false;
     });
 
-
     $(".pause").tooltip({
         title: "Pause this check?<br />Click again to confirm.",
         trigger: "manual",
@@ -160,7 +166,7 @@ $(function () {
         // Second click: update UI and pause the check
         btn.removeClass("confirm").tooltip("hide");
         var code = btn.closest("tr.checks-row").attr("id");
-        $("#" + code + " span.status").attr("class", "status icon-paused");
+        $("#" + code + " span.status").attr("class", "status ic-paused");
 
         var url = base + "/checks/" + code + "/pause/";
         var token = $('input[name=csrfmiddlewaretoken]').val();
@@ -177,15 +183,14 @@ $(function () {
         $(this).removeClass("confirm").tooltip("hide");
     });
 
-
     $('[data-toggle="tooltip"]').tooltip({
         html: true,
         container: "body",
         title: function() {
             var cssClasses = this.getAttribute("class");
-            if (cssClasses.indexOf("icon-new") > -1)
+            if (cssClasses.indexOf("ic-new") > -1)
                 return "New. Has never received a ping.";
-            if (cssClasses.indexOf("icon-paused") > -1)
+            if (cssClasses.indexOf("ic-paused") > -1)
                 return "Monitoring paused. Ping to resume.";
 
             if (cssClasses.indexOf("sort-name") > -1)
@@ -211,7 +216,7 @@ $(function () {
                 for(var i=0, el; el=data.details[i]; i++) {
                     if (lastStatus[el.code] != el.status) {
                         lastStatus[el.code] = el.status;
-                        $("#" + el.code + " span.status").attr("class", "status icon-" + el.status);
+                        $("#" + el.code + " span.status").attr("class", "status ic-" + el.status);
                     }
 
                     if (lastStarted[el.code] != el.started) {
@@ -221,17 +226,18 @@ $(function () {
 
                     if (lastPing[el.code] != el.last_ping) {
                         lastPing[el.code] = el.last_ping;
-                        $("#lpd-" + el.code).html(el.last_ping);
+                        $("#" + el.code + " .last-ping").html(el.last_ping);
                     }
                 }
 
-                $("#my-checks-tags div").each(function(a) {
-                    var status = data.tags[this.innerText];
-                    if (lastStatus[this.innerText] == status)
-                        return;
-
-                    $(this).removeClass("up grace down").addClass(status);
-                    lastStatus[this.innerText] = status;
+                $("#my-checks-tags > div.btn").each(function(a) {
+                    tag = this.innerText;
+                    this.setAttribute("data-tooltip", data.tags[tag][1]);
+                    var status = data.tags[tag][0];
+                    if (lastStatus[tag] != status) {
+                        $(this).removeClass("up grace down").addClass(status);
+                        lastStatus[tag] = status;
+                    }
                 });
 
                 if (document.title != data.title) {
@@ -246,24 +252,6 @@ $(function () {
         adaptiveSetInterval(refreshStatus);
     }
 
-    // Copy to clipboard
-    var clipboard = new Clipboard('button.copy-link');
-    $("button.copy-link").mouseout(function(e) {
-        setTimeout(function() {
-            e.target.textContent = "copy";
-        }, 300);
-    });
-
-    clipboard.on('success', function(e) {
-        e.trigger.textContent = "copied!";
-        e.clearSelection();
-    });
-
-    clipboard.on('error', function(e) {
-        var text = e.trigger.getAttribute("data-clipboard-text");
-        prompt("Press Ctrl+C to select:", text)
-    });
-
     // Configure Selectize for entering tags
     function divToOption() {
         return {value: this.textContent};
@@ -272,6 +260,7 @@ $(function () {
     $("#update-tags-input").selectize({
         create: true,
         createOnBlur: true,
+        selectOnTab: false,
         delimiter: " ",
         labelField: "value",
         searchField: ["value"],
@@ -280,4 +269,16 @@ $(function () {
         options: $("#my-checks-tags div").map(divToOption).get()
     });
 
+    $('.my-checks-url').tooltip({title: "Click to copy"});
+    $('.my-checks-url').click(function(e) {
+        if (window.getSelection().toString()) {
+            // do nothing, selection not empty
+            return;
+        }
+
+        navigator.clipboard.writeText(this.textContent);
+        $(".tooltip-inner").text("Copied!");
+    });
+
 });
+
